@@ -11,6 +11,8 @@ var (
 	ErrSourceExists       = errors.New("source already exists")
 	ErrSourceNotFound     = errors.New("source not found")
 	ErrIndexNotFound      = errors.New("index not found")
+	ErrModelMismatch      = errors.New("embedding model mismatch, full rebuild required")
+	ErrConfigChanged      = errors.New("chunking configuration changed, full rebuild required")
 )
 
 type ValidationError struct {

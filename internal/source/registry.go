@@ -12,7 +12,7 @@ import (
 	"sem/internal/errs"
 )
 
-var validName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var validName = regexp.MustCompile(`^[a-zA-Z0-9._ -]+$`)
 
 var defaultExtensions = []string{"md", "txt", "go", "rs", "ts", "js", "jsx", "tsx", "py", "toml", "yaml", "yml", "json"}
 

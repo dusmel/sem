@@ -9,7 +9,7 @@ import (
 	"sem/internal/errs"
 )
 
-var sourceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var sourceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._ -]+$`)
 
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.General.DefaultBundle) == "" {

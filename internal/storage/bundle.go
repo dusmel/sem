@@ -59,7 +59,7 @@ func Initialize(bundleDir, bundleName string, model embed.ModelSpec) error {
 		IndexedAt:      time.Time{},
 		Sources:        []config.SourceConfig{},
 	}
-	return bundle.writeMetadata(manifest, model)
+	return bundle.WriteMetadata(manifest, model)
 }
 
 func (b Bundle) Write(ctx context.Context, chunks []chunk.Record, vectors []EmbeddingRecord, manifest Manifest, model embed.ModelSpec) error {
@@ -75,7 +75,7 @@ func (b Bundle) Write(ctx context.Context, chunks []chunk.Record, vectors []Embe
 	if err := writeParquet(filepath.Join(b.Dir, embeddingsFile), vectors); err != nil {
 		return fmt.Errorf("write embeddings bundle: %w", err)
 	}
-	if err := b.writeMetadata(manifest, model); err != nil {
+	if err := b.WriteMetadata(manifest, model); err != nil {
 		return err
 	}
 	return nil
@@ -137,7 +137,8 @@ func (b Bundle) LoadManifest() (Manifest, error) {
 	return manifest, nil
 }
 
-func (b Bundle) writeMetadata(manifest Manifest, model embed.ModelSpec) error {
+// WriteMetadata writes the manifest and model files to the bundle directory.
+func (b Bundle) WriteMetadata(manifest Manifest, model embed.ModelSpec) error {
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
@@ -197,4 +198,129 @@ func readParquet[T any](path string) ([]T, error) {
 	}
 
 	return out, nil
+}
+
+// RemoveChunks removes chunks and their corresponding embeddings by chunk ID.
+// It loads existing data, filters out the specified chunk IDs, and rewrites the Parquet files.
+func (b Bundle) RemoveChunks(ctx context.Context, chunkIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Build a set for O(1) lookup
+	idSet := make(map[string]struct{}, len(chunkIDs))
+	for _, id := range chunkIDs {
+		idSet[id] = struct{}{}
+	}
+
+	// Load existing chunks, filter, and rewrite
+	chunksPath := filepath.Join(b.Dir, chunksFile)
+	var filteredChunks []chunk.Record
+	if _, err := os.Stat(chunksPath); err == nil {
+		existingChunks, err := readParquet[chunk.Record](chunksPath)
+		if err != nil {
+			return fmt.Errorf("read existing chunks: %w", err)
+		}
+		filteredChunks = make([]chunk.Record, 0, len(existingChunks))
+		for _, c := range existingChunks {
+			if _, found := idSet[c.ID]; !found {
+				filteredChunks = append(filteredChunks, c)
+			}
+		}
+	}
+
+	// Load existing embeddings, filter, and rewrite
+	embeddingsPath := filepath.Join(b.Dir, embeddingsFile)
+	var filteredEmbeddings []EmbeddingRecord
+	if _, err := os.Stat(embeddingsPath); err == nil {
+		existingEmbeddings, err := readParquet[EmbeddingRecord](embeddingsPath)
+		if err != nil {
+			return fmt.Errorf("read existing embeddings: %w", err)
+		}
+		filteredEmbeddings = make([]EmbeddingRecord, 0, len(existingEmbeddings))
+		for _, e := range existingEmbeddings {
+			if _, found := idSet[e.ChunkID]; !found {
+				filteredEmbeddings = append(filteredEmbeddings, e)
+			}
+		}
+	}
+
+	// Rewrite the Parquet files
+	if err := writeParquet(chunksPath, filteredChunks); err != nil {
+		return fmt.Errorf("write filtered chunks: %w", err)
+	}
+	if err := writeParquet(embeddingsPath, filteredEmbeddings); err != nil {
+		return fmt.Errorf("write filtered embeddings: %w", err)
+	}
+
+	// Update the manifest with new counts
+	manifest, err := b.LoadManifest()
+	if err != nil {
+		return fmt.Errorf("load manifest: %w", err)
+	}
+	manifest.ChunkCount = len(filteredChunks)
+	manifest.EmbeddingCount = len(filteredEmbeddings)
+	manifest.IndexedAt = time.Now()
+
+	model, err := b.LoadModel()
+	if err != nil {
+		return fmt.Errorf("load model: %w", err)
+	}
+
+	if err := b.WriteMetadata(manifest, model); err != nil {
+		return fmt.Errorf("write updated metadata: %w", err)
+	}
+
+	return nil
+}
+
+// Merge adds new chunks and embeddings to the existing bundle data.
+// It loads existing data, appends the new records, and rewrites the Parquet files.
+func (b Bundle) Merge(ctx context.Context, newChunks []chunk.Record, newVectors []EmbeddingRecord, manifest Manifest, model embed.ModelSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Load existing chunks (if file exists) and append new ones
+	chunksPath := filepath.Join(b.Dir, chunksFile)
+	var allChunks []chunk.Record
+	if _, err := os.Stat(chunksPath); err == nil {
+		existingChunks, err := readParquet[chunk.Record](chunksPath)
+		if err != nil {
+			return fmt.Errorf("read existing chunks: %w", err)
+		}
+		allChunks = existingChunks
+	}
+	allChunks = append(allChunks, newChunks...)
+
+	// Load existing embeddings (if file exists) and append new ones
+	embeddingsPath := filepath.Join(b.Dir, embeddingsFile)
+	var allEmbeddings []EmbeddingRecord
+	if _, err := os.Stat(embeddingsPath); err == nil {
+		existingEmbeddings, err := readParquet[EmbeddingRecord](embeddingsPath)
+		if err != nil {
+			return fmt.Errorf("read existing embeddings: %w", err)
+		}
+		allEmbeddings = existingEmbeddings
+	}
+	allEmbeddings = append(allEmbeddings, newVectors...)
+
+	// Rewrite the Parquet files with combined data
+	if err := writeParquet(chunksPath, allChunks); err != nil {
+		return fmt.Errorf("write combined chunks: %w", err)
+	}
+	if err := writeParquet(embeddingsPath, allEmbeddings); err != nil {
+		return fmt.Errorf("write combined embeddings: %w", err)
+	}
+
+	// Update manifest counts to reflect actual totals
+	manifest.ChunkCount = len(allChunks)
+	manifest.EmbeddingCount = len(allEmbeddings)
+
+	// Write updated manifest and model
+	if err := b.WriteMetadata(manifest, model); err != nil {
+		return fmt.Errorf("write metadata: %w", err)
+	}
+
+	return nil
 }

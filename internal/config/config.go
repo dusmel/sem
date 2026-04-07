@@ -45,6 +45,7 @@ type ChunkingConfig struct {
 
 type IgnoreConfig struct {
 	DefaultPatterns []string `mapstructure:"default_patterns" toml:"default_patterns"`
+	UseGitignore    bool     `mapstructure:"use_gitignore" toml:"use_gitignore"`
 }
 
 type SourceConfig struct {
@@ -98,6 +99,7 @@ func Default(baseDir string) Config {
 				"*.min.js",
 				"*.min.css",
 			},
+			UseGitignore: true,
 		},
 		Sources: []SourceConfig{},
 	}
