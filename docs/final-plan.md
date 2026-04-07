@@ -1,12 +1,3 @@
-Perfect — here’s the **updated final plan**, simplified and adjusted to your follow-ups:
-
-- add **Nomic Embed Text** as a 4th embedding mode
-- switch the implementation direction from Python to a **native fast/light stack**
-- use **OpenTUI** for the TUI layer
-- prefer **Rust** for v1, with an option of typescript ( bun ) or python for part not needing speed and constraint in memory.
-
----
-
 # Final Plan
 
 ## 1) Product direction

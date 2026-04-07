@@ -8,7 +8,7 @@ Think of it as a search engine that understands meaning, not just keywords. Poin
 
 ```bash
 # Build
-golang build -o sem ./cmd/sem
+golang build -o bin/sem ./cmd/sem
 
 # Initialize
 ./sem init
@@ -33,7 +33,7 @@ Requirements:
 ```bash
 git clone https://github.com/yourusername/sem.git
 cd sem
-golang build -o sem ./cmd/sem
+golang build -o bin/sem ./cmd/sem
 ```
 
 Move the binary somewhere in your PATH:
