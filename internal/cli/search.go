@@ -51,10 +51,11 @@ func runSearch(cmd *cobra.Command, application *app.App, query string, jsonOutpu
 		return err
 	}
 
-	service, err := embed.NewService(model.Mode)
+	service, err := embed.NewServiceWithModelDir(model.Mode, cfg.Embedding.ModelCacheDir)
 	if err != nil {
 		return err
 	}
+	defer service.Close()
 
 	queryVector, err := service.EmbedQuery(cmd.Context(), query)
 	if err != nil {

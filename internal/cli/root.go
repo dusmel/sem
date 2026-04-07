@@ -18,6 +18,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newInitCmd(application),
 		newSourceCmd(application),
 		newIndexCmd(application),
+		newSyncCmd(application),
+		newStatusCmd(application),
 		newSearchCmd(application),
 	)
 
