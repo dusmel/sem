@@ -21,6 +21,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newSyncCmd(application),
 		newStatusCmd(application),
 		newSearchCmd(application),
+		newDoctorCmd(application),
 	)
 
 	return cmd

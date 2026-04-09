@@ -3,14 +3,19 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 
 	"sem/internal/app"
 	"sem/internal/chunk"
 	"sem/internal/config"
 	"sem/internal/embed"
 	"sem/internal/errs"
+	"sem/internal/log"
 	"sem/internal/scan"
 	"sem/internal/storage"
 )
@@ -31,10 +36,49 @@ type SyncResult struct {
 	DeletedFiles int
 }
 
+// ProgressCallbacks provides hooks for indexing progress updates.
+// Each callback receives the current count and total count for that phase.
+type ProgressCallbacks struct {
+	OnScanStart     func(total int)
+	OnScanProgress  func(current, total int)
+	OnChunkStart    func(total int)
+	OnChunkProgress func(current, total int)
+	OnEmbedStart    func(total int)
+	OnEmbedProgress func(current, total int)
+	OnWriteStart    func(total int)
+	OnWriteProgress func(current, total int)
+}
+
+// shouldShowProgress returns true if progress bars should be displayed.
+// Progress bars are disabled when:
+// - verbose mode is enabled (conflicts with debug logging on stderr)
+// - stderr is not a TTY (piped output)
+func shouldShowProgress(verbose bool) bool {
+	if verbose {
+		return false
+	}
+	return term.IsTerminal(int(os.Stderr.Fd()))
+}
+
+// newProgressBar creates a progress bar with standard options.
+func newProgressBar(total int, description string) *progressbar.ProgressBar {
+	return progressbar.NewOptions(total,
+		progressbar.OptionSetDescription(description),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetPredictTime(true),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "=",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
+}
+
 // Run performs full or incremental indexing based on the full flag.
 // If full is true, it rebuilds the entire index from scratch.
 // If full is false, it performs incremental sync based on file changes.
-func Run(ctx context.Context, paths app.Paths, cfg config.Config, sourceName string, full bool) (SyncResult, error) {
+func Run(ctx context.Context, paths app.Paths, cfg config.Config, sourceName string, full bool, logger *log.Logger, progress *ProgressCallbacks) (SyncResult, error) {
 	started := time.Now()
 	sources := enabledSources(cfg.Sources, sourceName)
 	if len(sources) == 0 {
@@ -43,6 +87,7 @@ func Run(ctx context.Context, paths app.Paths, cfg config.Config, sourceName str
 		}
 		return SyncResult{}, errs.ErrNoSources
 	}
+	logger.Debug("indexing %d sources", len(sources))
 
 	bundleDir := paths.BundleDir(cfg.General.DefaultBundle)
 	bundle := storage.NewBundle(bundleDir)
@@ -61,6 +106,7 @@ func Run(ctx context.Context, paths app.Paths, cfg config.Config, sourceName str
 	}
 	defer service.Close()
 	currentModel := service.Model()
+	logger.Debug("embedding model: %s (%s)", currentModel.Mode, currentModel.Name)
 
 	// Check for conditions that force a full rebuild
 	if !full && len(state.Files) > 0 {
@@ -81,10 +127,10 @@ func Run(ctx context.Context, paths app.Paths, cfg config.Config, sourceName str
 	}
 
 	if full {
-		return runFullRebuild(ctx, service, bundle, store, sources, cfg, state, started)
+		return runFullRebuild(ctx, service, bundle, store, sources, cfg, state, started, logger, progress)
 	}
 
-	return runIncrementalSync(ctx, service, bundle, store, sources, cfg, state, sourceName, started)
+	return runIncrementalSync(ctx, service, bundle, store, sources, cfg, state, sourceName, started, logger, progress)
 }
 
 // runFullRebuild performs a complete rebuild of the index.
@@ -97,8 +143,14 @@ func runFullRebuild(
 	cfg config.Config,
 	state BundleState,
 	started time.Time,
+	logger *log.Logger,
+	progress *ProgressCallbacks,
 ) (SyncResult, error) {
-	// Scan all documents
+	// Phase 1: Scan all documents
+	if progress != nil && progress.OnScanStart != nil {
+		progress.OnScanStart(len(sources)) // We don't know file count yet
+	}
+
 	documents := make([]scan.FileDocument, 0, 256)
 	for _, src := range sources {
 		docs, err := scan.ScanSource(ctx, src, cfg.Ignore)
@@ -106,24 +158,46 @@ func runFullRebuild(
 			return SyncResult{}, err
 		}
 		documents = append(documents, docs...)
+		if progress != nil && progress.OnScanProgress != nil {
+			progress.OnScanProgress(len(documents), len(documents))
+		}
+	}
+	logger.Debug("scanned %d files from %d sources", len(documents), len(sources))
+
+	// Phase 2: Chunk all documents
+	if progress != nil && progress.OnChunkStart != nil {
+		progress.OnChunkStart(len(documents))
 	}
 
-	// Chunk all documents
 	records, err := chunk.Build(ctx, documents, cfg.Chunking)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("chunk files: %w", err)
 	}
+	if progress != nil && progress.OnChunkProgress != nil {
+		progress.OnChunkProgress(len(documents), len(documents))
+	}
+	logger.Debug("produced %d chunks", len(records))
 
-	// Embed all chunks
+	// Phase 3: Embed all chunks
+	if progress != nil && progress.OnEmbedStart != nil {
+		progress.OnEmbedStart(len(records))
+	}
+
 	texts := make([]string, 0, len(records))
 	for _, record := range records {
 		texts = append(texts, record.Content)
 	}
 
-	vectors, err := service.EmbedDocuments(ctx, texts)
+	embedStart := time.Now()
+	var onEmbedProgress embed.EmbedProgress
+	if progress != nil && progress.OnEmbedProgress != nil {
+		onEmbedProgress = progress.OnEmbedProgress
+	}
+	vectors, err := service.EmbedDocuments(ctx, texts, onEmbedProgress)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("embed documents: %w", err)
 	}
+	logger.Debug("embedding %d vectors took %s", len(vectors), time.Since(embedStart))
 
 	// Create embedding records
 	vectorRecords := make([]storage.EmbeddingRecord, 0, len(vectors))
@@ -132,6 +206,11 @@ func runFullRebuild(
 			ChunkID: records[i].ID,
 			Vector:  vector,
 		})
+	}
+
+	// Phase 4: Write bundle
+	if progress != nil && progress.OnWriteStart != nil {
+		progress.OnWriteStart(3) // manifest + state + cache
 	}
 
 	// Build new state
@@ -152,15 +231,24 @@ func runFullRebuild(
 	if err := bundle.Write(ctx, records, vectorRecords, manifest, service.Model()); err != nil {
 		return SyncResult{}, err
 	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(1, 3)
+	}
 
 	// Save state
 	if err := SaveState(bundle.Dir, newState); err != nil {
 		return SyncResult{}, fmt.Errorf("save state: %w", err)
 	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(2, 3)
+	}
 
 	// Rebuild vector cache
 	if err := store.RebuildIndex(ctx, vectorRecords); err != nil {
 		return SyncResult{}, fmt.Errorf("rebuild vector cache: %w", err)
+	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(3, 3)
 	}
 
 	return SyncResult{
@@ -188,8 +276,14 @@ func runIncrementalSync(
 	state BundleState,
 	sourceName string,
 	started time.Time,
+	logger *log.Logger,
+	progress *ProgressCallbacks,
 ) (SyncResult, error) {
-	// Scan all enabled sources
+	// Phase 1: Scan all enabled sources
+	if progress != nil && progress.OnScanStart != nil {
+		progress.OnScanStart(len(sources))
+	}
+
 	documents := make([]scan.FileDocument, 0, 256)
 	for _, src := range sources {
 		docs, err := scan.ScanSource(ctx, src, cfg.Ignore)
@@ -197,6 +291,9 @@ func runIncrementalSync(
 			return SyncResult{}, err
 		}
 		documents = append(documents, docs...)
+		if progress != nil && progress.OnScanProgress != nil {
+			progress.OnScanProgress(len(documents), len(documents))
+		}
 	}
 
 	// Build current files map
@@ -208,6 +305,7 @@ func runIncrementalSync(
 
 	// Compute diff
 	diff := Diff(state, currentFiles)
+	logger.Debug("diff: %d new, %d changed, %d deleted", len(diff.NewFiles), len(diff.ChangedFiles), len(diff.DeletedFiles))
 
 	// If nothing changed, return early
 	if len(diff.NewFiles) == 0 && len(diff.ChangedFiles) == 0 && len(diff.DeletedFiles) == 0 {
@@ -284,24 +382,41 @@ func runIncrementalSync(
 	var newVectors []storage.EmbeddingRecord
 
 	if len(filesToProcess) > 0 {
-		// Chunk files to process
+		// Phase 2: Chunk files to process
+		if progress != nil && progress.OnChunkStart != nil {
+			progress.OnChunkStart(len(filesToProcess))
+		}
+
 		records, err := chunk.Build(ctx, filesToProcess, cfg.Chunking)
 		if err != nil {
 			return SyncResult{}, fmt.Errorf("chunk files: %w", err)
 		}
 		newRecords = records
+		if progress != nil && progress.OnChunkProgress != nil {
+			progress.OnChunkProgress(len(filesToProcess), len(filesToProcess))
+		}
 
-		// Embed chunks
+		// Phase 3: Embed chunks
 		if len(records) > 0 {
+			if progress != nil && progress.OnEmbedStart != nil {
+				progress.OnEmbedStart(len(records))
+			}
+
 			texts := make([]string, 0, len(records))
 			for _, record := range records {
 				texts = append(texts, record.Content)
 			}
 
-			vectors, err := service.EmbedDocuments(ctx, texts)
+			embedStart := time.Now()
+			var onEmbedProgress embed.EmbedProgress
+			if progress != nil && progress.OnEmbedProgress != nil {
+				onEmbedProgress = progress.OnEmbedProgress
+			}
+			vectors, err := service.EmbedDocuments(ctx, texts, onEmbedProgress)
 			if err != nil {
 				return SyncResult{}, fmt.Errorf("embed documents: %w", err)
 			}
+			logger.Debug("embedding %d vectors took %s", len(vectors), time.Since(embedStart))
 
 			for i, vector := range vectors {
 				newVectors = append(newVectors, storage.EmbeddingRecord{
@@ -312,7 +427,11 @@ func runIncrementalSync(
 		}
 	}
 
-	// Merge new chunks into bundle
+	// Phase 4: Merge into bundle
+	if progress != nil && progress.OnWriteStart != nil {
+		progress.OnWriteStart(3) // manifest + state + cache
+	}
+
 	manifest, err := bundle.LoadManifest()
 	if err != nil {
 		// If no manifest exists, create a new one
@@ -342,11 +461,17 @@ func runIncrementalSync(
 			return SyncResult{}, fmt.Errorf("update metadata: %w", err)
 		}
 	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(1, 3)
+	}
 
 	// Update state
 	newState := updateState(state, currentFiles, newRecords, diff, sourceName)
 	if err := SaveState(bundle.Dir, newState); err != nil {
 		return SyncResult{}, fmt.Errorf("save state: %w", err)
+	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(2, 3)
 	}
 
 	// Rebuild vector cache (full rebuild for simplicity)
@@ -356,6 +481,9 @@ func runIncrementalSync(
 	}
 	if err := store.RebuildIndex(ctx, allEmbeddings); err != nil {
 		return SyncResult{}, fmt.Errorf("rebuild vector cache: %w", err)
+	}
+	if progress != nil && progress.OnWriteProgress != nil {
+		progress.OnWriteProgress(3, 3)
 	}
 
 	// Calculate final stats
