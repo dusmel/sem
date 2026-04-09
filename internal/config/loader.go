@@ -34,6 +34,16 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// Backward compatibility: migrate general.embedding_mode to embedding.mode
+	// The EmbeddingMode field in GeneralConfig is deprecated
+	if v.IsSet("general.embedding_mode") {
+		oldMode := v.GetString("general.embedding_mode")
+		if cfg.Embedding.Mode == "" && oldMode != "" {
+			cfg.Embedding.Mode = oldMode
+		}
+		fmt.Fprintf(os.Stderr, "Warning: general.embedding_mode is deprecated, use embedding.mode instead\n")
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}

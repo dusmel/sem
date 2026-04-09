@@ -20,10 +20,6 @@ func (c *Config) Validate() error {
 		return errs.ValidationError{Field: "embedding.mode", Message: "must be one of light, balanced, quality, nomic"}
 	}
 
-	if c.General.EmbeddingMode == "" {
-		c.General.EmbeddingMode = c.Embedding.Mode
-	}
-
 	if c.Storage.Backend != "lancedb" {
 		return errs.ValidationError{Field: "storage.backend", Message: "Stage 1 supports only lancedb"}
 	}

@@ -60,7 +60,7 @@ func Default(baseDir string) Config {
 	return Config{
 		General: GeneralConfig{
 			DefaultBundle: "default",
-			EmbeddingMode: "balanced",
+			// EmbeddingMode is deprecated; use Embedding.Mode instead
 		},
 		Embedding: EmbeddingConfig{
 			Mode:          "balanced",
