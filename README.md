@@ -35,7 +35,7 @@ sem search "how do I configure authentication?"
 Requirements: Go 1.21+
 
 ```bash
-git clone https://github.com/yourusername/sem.git
+git clone https://github.com/dusmel/sem.git
 cd sem
 go build -o sem ./cmd/sem
 ```
@@ -49,7 +49,7 @@ mv sem /usr/local/bin/
 ### Dependencies
 
 - **ripgrep** (`rg`) — required for exact and hybrid search modes. Install with `brew install ripgrep` (macOS) or `apt install ripgrep` (Linux).
-- **ONNX Runtime** — required for real embeddings. Install with `brew install onnxruntime` (macOS). Without it, sem falls back to hash-based embeddings (fast but less accurate).
+- (optional) **ONNX Runtime** — required for real embeddings. Install with `brew install onnxruntime` (macOS). Without it, sem falls back to hash-based embeddings (fast but less accurate).
 
 Run `sem doctor` to check your setup.
 
