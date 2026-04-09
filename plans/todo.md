@@ -1,23 +1,66 @@
 # sem — Pending & Deferred Items
 
-> Collected from Stage 1 and Stage 2 docs. Organized by target stage for prioritization.
+> Collected from Stage 1, 2, and 3 docs. Organized by target stage for prioritization.
 
 ---
 
-## Stage 3 — Good Search Quality
+## Stage 3 — Good Search Quality (IN PROGRESS)
 
-### High Priority
+> Spec: `plans/phase-3.spec.md`
 
-- [ ] **Hybrid search** — merge semantic + exact (ripgrep) results with reranking
-- [ ] **Exact content search** — ripgrep integration for symbols, file names, config keys
-- [ ] **Better code chunking** — AST-aware chunking for Go, Python, JS/TS, Rust
-- [ ] **Source/type filters** — `--source`, `--language`, `--kind` flags on search
+### Stream 1: Hybrid Search (COMPLETE)
 
-### Medium Priority
+- [x] **Exact search via ripgrep** — shell out to `rg --json` for exact content search
+- [x] **Search mode flag** — `--mode semantic|exact|hybrid` on `sem search`, default hybrid
+- [x] **Hybrid ranking** — Reciprocal Rank Fusion (RRF, k=60) to merge semantic + exact results
+- [ ] **File/path search** — exact matching on file paths, names, extensions
+- [ ] **Snippet highlighting** — ANSI highlighting of matching terms in search results
 
-- [ ] **Improved tokenizer** — accent stripping (NFD + remove combining marks), Chinese character handling, BPE support for non-BERT models (nomic uses BPE not WordPiece)
-- [ ] **Search mode flag** — `--mode semantic|exact|hybrid` (currently only semantic)
-- [ ] **Snippet highlighting** — highlight matching terms in search results
+### Stream 2: Better Code Chunking (COMPLETE)
+
+- [x] **Language-aware chunking** — regex-based function/class boundary detection for Go, Python, JS/TS, Rust
+- [x] **Markdown heading-aware chunking** — implement `respect_headings` config (defined but not used)
+- [x] **Chunk metadata enrichment** — add FunctionName, SectionLevel to chunk metadata
+
+### Stream 3: Filters & Search UX (COMPLETE)
+
+- [x] **`--source` filter** — already partially wired, complete integration
+- [x] **`--language` filter** — filter results by programming language
+- [x] **`--kind` filter** — filter by file kind (markdown, code, text)
+- [x] **`--dir` filter** — filter by subdirectory path (e.g. `notes/`, `src/`)
+
+### Stream 4: Embedding Optimizations
+
+- [x] **4.1 ONNX O1-O4 optimized variants** — download and prefer graph-optimized models (1.5-2x speedup)
+- [x] **4.2 Dynamic max_tokens per mode** — use model-specific limits (MiniLM=256, BGE=512) instead of config default
+- [x] **4.3 Quantized BGE Small model** — use community INT8 model from `Qdrant/bge-small-en-v1.5-onnx-Q` (5-9x speedup)
+- [x] **4.4 Qdrant BGE Base optimized** — use `model_optimized.onnx` from `Qdrant/bge-base-en-v1.5-onnx-Q` for quality mode (~1.5-2x speedup)
+
+### Stream 5: Low-Hanging Fruit
+
+- [x] **5.1 Progress bars** — show indexing progress with count/ETA (`schollz/progressbar/v3`)
+- [x] **5.2 `--verbose` flag** — debug logging for search/index operations
+- [x] **5.3 Tokenizer accent stripping** — NFD + remove combining marks for better non-ASCII matching
+- [x] **5.4 `sem doctor`** — validate environment: ripgrep, ONNX Runtime, model files, config
+- [x] **5.5 Snippet highlighting** — ANSI color codes for matched terms in human-readable output
+
+### Stream 6: Integration Tests
+
+- [x] **6.1 E2E workflow tests** — end-to-end: init → source add → index → sync → search
+
+### README
+
+- [x] **R1 Practical usage manual** — simple → complex cases, real examples, filter combos, JSON scripting, embedding modes
+
+---
+
+## Deferred to Later Phases
+
+- [ ] **Nomic BPE tokenizer** — deferred (spec §5.4.4)
+- [ ] **`--file-match` flag** — search filenames only, not content
+- [ ] **ClassName/Imports metadata** — deferred (spec §5.2.4)
+- [ ] **Export script for BGE Base INT8** — dropped (Qdrant optimized model is sufficient)
+- [ ] **`[search]` config section** — deferred (spec §5.1.3)
 
 ---
 
@@ -58,40 +101,31 @@
 
 ## Stage 8 — Polish
 
-- [ ] **`sem doctor`** — health check: ONNX Runtime, model files, bundle integrity, config validity
 - [ ] **Saved searches** — name and recall frequent queries
 - [ ] **Search history** — persistent history of queries
 - [ ] **Bookmarks** — save/star specific results
-- [ ] **Improved highlighting** — better snippet formatting and match highlighting
 - [ ] **Packaging/distribution** — goreleaser, cross-compilation, Homebrew tap
-- [ ] **Bundle ONNX Runtime with releases** — users should NOT need to install separately (explicitly requested)
+- [ ] **Bundle ONNX Runtime with releases** — users should NOT need to install separately
 
 ---
 
 ## Cross-Cutting / Unassigned
 
-These don't map to a specific stage but should be addressed when relevant.
-
 ### Quality & Testing
 
-- [ ] **Test files** — zero `*_test.go` files exist; add unit tests for core packages (chunk, embed, storage, indexer)
-- [ ] **Integration tests** — end-to-end workflow tests: init → source add → index → sync → search
-- [ ] **State.json atomic writes** — write to `state.json.tmp` then rename (currently not atomic, risk of corruption on crash)
 - [ ] **Model download resume** — resume partial downloads instead of restarting
 
 ### Performance
 
 - [ ] **Concurrent embedding** — worker pool with `errgroup` for parallel batch processing
+- [ ] **Better performance for non-ARM** — target for embedding generation should not exceed 5-7sec
 - [ ] **Append-only Parquet** — avoid full rewrite on every sync; add periodic compaction
 - [ ] **Streaming state** — for indexes >100k files, stream state instead of loading all into memory
-- [ ] **Real LanceDB** — replace JSON cache with actual LanceDB Go bindings (currently using JSON file + brute-force cosine similarity)
-- [ ] **Quantized models for balanced/quality/nomic** — only light mode has INT8 ARM64 variant; export or find quantized versions for other modes
-- [ ] **CoreML execution provider** — use M1 Neural Engine via `AppendExecutionProviderCoreML()` for faster inference
+- [ ] **Real LanceDB** — replace JSON cache with actual LanceDB Go bindings
+- [ ] **CoreML execution provider** — use M1 Neural Engine via `AppendExecutionProviderCoreML()`
 
 ### UX
 
-- [ ] **Progress bars** — show indexing progress with ETA and throughput
-- [ ] **`--verbose` flag** — opt-in debug logging
 - [ ] **Multiple bundles** — config supports it, CLI doesn't expose it
 - [ ] **Source-specific ignore** — config supports `exclude_patterns` per source, not fully tested
 - [ ] **Staleness detection** — `sem status` should detect changed files since last index and report "stale"
@@ -99,7 +133,6 @@ These don't map to a specific stage but should be addressed when relevant.
 
 ### Architecture Debt
 
-- [ ] **Remove hash-based embedding fallback** — phase-2 spec said "remove entirely, no fallback" but we kept it for robustness; decide whether to keep or remove
-- [ ] **ONNX Runtime auto-download** — download shared library during `sem init` or first use instead of requiring manual install
-- [ ] **Config validation** — `embedding_mode` in `[general]` and `[embedding]` are redundant; consolidate
-- [ ] **Error kinds** — `ErrModelNotFound`, `ErrModelDownload`, `ErrONNXRuntime` were planned in spec but not all implemented
+- [ ] **Remove hash-based embedding fallback** — kept for robustness; decide whether to keep or remove
+- [ ] **ONNX Runtime auto-download** — download shared library during `sem init` or first use
+- [ ] **Error kinds** — `ErrModelNotFound`, `ErrModelDownload`, `ErrONNXRuntime` were planned but not all implemented
