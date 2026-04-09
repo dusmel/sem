@@ -2,7 +2,7 @@
 
 Local-first semantic search for your repos, markdown notes, docs, and knowledge vaults.
 
-Think of it as a search engine that understands meaning, not just keywords. Point it at your documents, let it build an index, and then ask questions in plain language.
+Index your repos, vaults, markdown files, and docs. Then search them in plain language and no cloud required. 
 
 ## Quick Start
 
