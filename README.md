@@ -7,20 +7,25 @@ Index your repos, vaults, markdown files, and docs. Then search them in plain la
 ## Quick Start
 
 ```bash
-# Build
-golang build -o sem ./cmd/sem
+# Build the binary
+go build -o sem ./cmd/sem
+
+# Move it to anexecutable path ( use sudo if needed )
+mv sem /usr/local/bin/sem
+
+sem --help
 
 # Initialize
-./sem init
+sem init
 
 # Add a source
-./sem source add ~/my-notes --name notes
+sem source add ~/my-notes --name notes
 
 # Build the index
-./sem index
+sem index
 
 # Search
-./sem search "how do I configure authentication?"
+sem search "how do I configure authentication?"
 ```
 
 ## Installation
@@ -32,7 +37,7 @@ Requirements: Go 1.21+
 ```bash
 git clone https://github.com/yourusername/sem.git
 cd sem
-golang build -o sem ./cmd/sem
+go build -o sem ./cmd/sem
 ```
 
 Move the binary somewhere in your PATH:
