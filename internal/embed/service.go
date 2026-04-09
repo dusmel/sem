@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var tokenPattern = regexp.MustCompile(`[\pL\pN_]+`)
@@ -82,7 +85,10 @@ func (s *Service) Close() error {
 	return nil
 }
 
-func (s *Service) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+// EmbedProgress reports embedding progress as (current, total) chunks.
+type EmbedProgress func(current, total int)
+
+func (s *Service) EmbedDocuments(ctx context.Context, texts []string, onProgress ...EmbedProgress) ([][]float32, error) {
 	// Try ONNX backend first
 	if s.backend != nil {
 		// Apply document prefix
@@ -94,6 +100,7 @@ func (s *Service) EmbedDocuments(ctx context.Context, texts []string) ([][]float
 		// Process in batches
 		batchSize := 32
 		var results [][]float32
+		total := len(prefixed)
 		for i := 0; i < len(prefixed); i += batchSize {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -114,17 +121,27 @@ func (s *Service) EmbedDocuments(ctx context.Context, texts []string) ([][]float
 				continue
 			}
 			results = append(results, batch...)
+
+			// Report progress if callback provided
+			if len(onProgress) > 0 && onProgress[0] != nil {
+				onProgress[0](end, total)
+			}
 		}
 		return results, nil
 	}
 
 	// Hash-based fallback
 	vectors := make([][]float32, 0, len(texts))
-	for _, text := range texts {
+	total := len(texts)
+	for i, text := range texts {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		vectors = append(vectors, s.hashEmbed(s.spec.DocumentPrefix+text))
+		// Report progress if callback provided
+		if len(onProgress) > 0 && onProgress[0] != nil {
+			onProgress[0](i+1, total)
+		}
 	}
 	return vectors, nil
 }
@@ -173,7 +190,22 @@ func (s *Service) hashEmbed(text string) []float32 {
 }
 
 func tokenize(text string) []string {
+	// Strip accents before tokenizing so "café" and "cafe" produce the same tokens
+	text = stripAccentsHash(text)
 	return tokenPattern.FindAllString(strings.ToLower(text), -1)
+}
+
+// stripAccentsHash applies NFD normalization and removes combining marks.
+func stripAccentsHash(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range norm.NFD.String(text) {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func applyHashedToken(vec []float32, token string, weight float32) {

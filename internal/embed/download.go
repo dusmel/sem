@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // EnsureModel checks if the ONNX model files exist and downloads them if missing.
@@ -28,28 +29,9 @@ func EnsureModel(spec ModelSpec, modelDir string) error {
 		fmt.Printf("Downloading embedding model '%s' (%s)...\n", spec.Mode, spec.Name)
 		fmt.Printf("This is a one-time download (~%dMB).\n", spec.ModelSizeMB)
 
-		// Download ONNX model
-		onnxURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", spec.HuggingFaceID, spec.ONNXFile)
-		if err := downloadFile(onnxPath, onnxURL); err != nil {
+		// Try variants in priority order
+		if err := downloadBestVariant(spec, modelDir, onnxPath); err != nil {
 			return fmt.Errorf("download ONNX model: %w", err)
-		}
-	}
-
-	// Download quantized model variant if available and not yet downloaded
-	if spec.ONNXQuantizedFile != "" {
-		quantizedPath := filepath.Join(modelDir, "model_quantized.onnx")
-		if _, err := os.Stat(quantizedPath); err != nil {
-			if err := os.MkdirAll(modelDir, 0755); err != nil {
-				return fmt.Errorf("create model directory: %w", err)
-			}
-			if !modelExists {
-				fmt.Printf("Downloading quantized model for faster inference...\n")
-			}
-			quantizedURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", spec.HuggingFaceID, spec.ONNXQuantizedFile)
-			if err := downloadFile(quantizedPath, quantizedURL); err != nil {
-				// Quantized model download failure is not fatal
-				fmt.Printf("Note: quantized model not available, using standard model\n")
-			}
 		}
 	}
 
@@ -59,9 +41,17 @@ func EnsureModel(spec ModelSpec, modelDir string) error {
 		if err := os.MkdirAll(modelDir, 0755); err != nil {
 			return fmt.Errorf("create model directory: %w", err)
 		}
-		tokenizerURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/tokenizer.json", spec.HuggingFaceID)
-		if err := downloadFile(tokenizerPath, tokenizerURL); err != nil {
-			fmt.Printf("Warning: could not download tokenizer: %v\n", err)
+		// Try to find a variant that has the tokenizer
+		tokenizerDownloaded := false
+		for _, variant := range spec.Variants {
+			tokenizerURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", variant.Repo, spec.TokenizerFile)
+			if err := downloadFile(tokenizerPath, tokenizerURL); err == nil {
+				tokenizerDownloaded = true
+				break
+			}
+		}
+		if !tokenizerDownloaded {
+			fmt.Printf("Warning: could not download tokenizer\n")
 			fmt.Printf("Using simple tokenization fallback.\n")
 		}
 	}
@@ -70,6 +60,34 @@ func EnsureModel(spec ModelSpec, modelDir string) error {
 		fmt.Printf("Model '%s' downloaded successfully.\n", spec.Name)
 	}
 	return nil
+}
+
+// downloadBestVariant tries to download model variants in priority order.
+// It saves the downloaded file as "model.onnx" in the model directory.
+func downloadBestVariant(spec ModelSpec, modelDir, destPath string) error {
+	// Sort variants by priority (highest first)
+	variants := make([]ModelVariant, len(spec.Variants))
+	copy(variants, spec.Variants)
+	sort.Slice(variants, func(i, j int) bool {
+		return variants[i].Priority > variants[j].Priority
+	})
+
+	var lastErr error
+	for _, variant := range variants {
+		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", variant.Repo, variant.File)
+		fmt.Printf("  Trying: %s/%s\n", variant.Repo, variant.File)
+
+		if err := downloadFile(destPath, url); err != nil {
+			fmt.Printf("  Failed: %v\n", err)
+			lastErr = err
+			continue
+		}
+
+		fmt.Printf("  Downloaded: %s/%s\n", variant.Repo, variant.File)
+		return nil
+	}
+
+	return fmt.Errorf("all variants failed (last error: %w)", lastErr)
 }
 
 func downloadFile(destPath, url string) error {

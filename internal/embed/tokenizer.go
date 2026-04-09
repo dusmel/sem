@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Tokenizer implements a minimal WordPiece tokenizer that reads
@@ -126,8 +128,11 @@ func (t *Tokenizer) Encode(text string) []int64 {
 	return tokens
 }
 
-// normalizeText does basic text normalization: lowercase and clean whitespace.
+// normalizeText does basic text normalization: accent stripping, lowercase, and clean whitespace.
 func normalizeText(text string) string {
+	// Strip accents: NFD decomposes accented chars, then remove combining marks
+	text = stripAccents(text)
+
 	// Lowercase
 	text = strings.ToLower(text)
 
@@ -147,6 +152,20 @@ func normalizeText(text string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// stripAccents applies NFD normalization and removes combining marks,
+// so that "café" and "cafe" produce the same base characters.
+func stripAccents(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range norm.NFD.String(text) {
+		if unicode.Is(unicode.Mn, r) {
+			continue // skip combining marks
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // preTokenize splits text into words following BERT pre-tokenization rules:
